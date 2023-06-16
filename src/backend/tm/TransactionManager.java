@@ -5,7 +5,7 @@ public interface TransactionManager {
     void commit(long xid);
     void abort(long xid);
     boolean isActive(long xid);
-    boolean isCommited(long xid);
+    boolean isCommitted(long xid);
     boolean isAborted(long xid);
     void close();
 }

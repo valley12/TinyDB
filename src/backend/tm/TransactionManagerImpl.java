@@ -15,9 +15,9 @@ import java.util.concurrent.locks.ReentrantLock;
 public class TransactionManagerImpl implements TransactionManager{
     // XID文件头长度，8字节
     static final int LEN_XID_HEADER_LENGTH = 8;
-    //事务占用长度,?
+    //事务占用长度，1字节?
     private static final int XID_FIELD_SIZE = 1;
-    //事务状态
+    //事务状态，active(0), committed(1), aborted(2)
     private static final byte FIELD_TRAN_ACTIVE = 0;
     private static final byte FIELD_TRAN_COMMITTED = 1;
     private static final byte FIELD_TRAN_ABORTED = 2;
@@ -29,9 +29,12 @@ public class TransactionManagerImpl implements TransactionManager{
 
     private RandomAccessFile file;
     private FileChannel fc;
+
+    //事务ID计数
     private long xidCounter;
     private Lock counterLock;
 
+    // 构造方法
     TransactionManagerImpl(RandomAccessFile raf, FileChannel fc){
         this.file = raf;
         this.fc = fc;
@@ -76,6 +79,11 @@ public class TransactionManagerImpl implements TransactionManager{
         counterLock.lock();
         try {
             long xid = xidCounter + 1;
+            updateXID(xid, FIELD_TRAN_ACTIVE);
+            incrXIDCounter();
+            return xid;
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         } finally {
             counterLock.unlock();
         }
@@ -96,9 +104,64 @@ public class TransactionManagerImpl implements TransactionManager{
     }
 
     //XID自增，更新XID Header
-    private void incrXIDCounter(){
+    private void incrXIDCounter() throws IOException {
         xidCounter++;
-
+        ByteBuffer buf = ByteBuffer.wrap(Parser.long2Byte(xidCounter));
+        try {
+            fc.position(0);
+            fc.write(buf);
+        } catch (IOException e) {
+            Panic.panic(e);
+        }
+        try {
+            fc.force(false);
+        } catch (IOException e) {
+            Panic.panic(e);
+        }
     }
 
+    public void commit(long xid){
+        updateXID(xid, FIELD_TRAN_COMMITTED);
+    }
+
+    public void abort(long xid){
+        updateXID(xid, FIELD_TRAN_ABORTED);
+    }
+
+    public boolean isActive(long xid){
+        if(xid==SUPER_XID) return true;
+        return checkXID(xid, FIELD_TRAN_ACTIVE);
+    }
+
+    public boolean isCommitted(long xid){
+        if(xid==SUPER_XID) return true;
+        return checkXID(xid, FIELD_TRAN_COMMITTED);
+    }
+
+    public boolean isAborted(long xid){
+        if(xid==SUPER_XID) return true;
+        return checkXID(xid, FIELD_TRAN_ABORTED);
+    }
+
+    public boolean checkXID(long xid, byte status){
+        long offset = getXidPosition(xid);
+        ByteBuffer buf = ByteBuffer.wrap(new byte[XID_FIELD_SIZE]);
+        try{
+            fc.position(offset);
+            fc.read(buf);
+
+        }catch (IOException e){
+            Panic.panic(e);
+        }
+        return buf.array()[0] == status;
+    }
+
+    public void close(){
+        try {
+            fc.close();
+            file.close();
+        } catch (IOException e) {
+            Panic.panic(e);
+        }
+    }
 }
